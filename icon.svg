@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="tile" x1="8" y1="7" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6764F4"/>
+      <stop offset="0.55" stop-color="#487CF2"/>
+      <stop offset="1" stop-color="#26BFC9"/>
+    </linearGradient>
+    <linearGradient id="folder" x1="20" y1="27" x2="48" y2="51" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDF7FF"/>
+    </linearGradient>
+    <filter id="shadow" x="13" y="19" width="42" height="37" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#173987" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="15" fill="url(#tile)"/>
+  <path d="M13 24.5A5.5 5.5 0 0 1 18.5 19h8.2c1.4 0 2.7.5 3.7 1.5l2.8 2.8h10.3a5.5 5.5 0 0 1 5.5 5.5v15.7a5.5 5.5 0 0 1-5.5 5.5h-25A5.5 5.5 0 0 1 13 45Z" fill="#FFFFFF" fill-opacity="0.24"/>
+  <g filter="url(#shadow)">
+    <path d="M19 28.5A6.5 6.5 0 0 1 25.5 22h7.1c1.7 0 3.3.7 4.5 1.9L39.9 27h7.6A6.5 6.5 0 0 1 54 33.5V46a6 6 0 0 1-6 6H25a6 6 0 0 1-6-6Z" fill="url(#folder)"/>
+    <path d="M22 34.5h24" stroke="#9FDDEA" stroke-width="2.2" stroke-linecap="round"/>
+    <circle cx="28" cy="41.5" r="2.1" fill="#4D6FEA"/>
+    <circle cx="34" cy="41.5" r="2.1" fill="#3F8BEE"/>
+    <circle cx="40" cy="41.5" r="2.1" fill="#2DBDBF"/>
+  </g>
+  <path d="M39 15.5h8.5a4.5 4.5 0 0 1 4.5 4.5v8.5a4.5 4.5 0 0 1-4.5 4.5h-8.5a4.5 4.5 0 0 1-4.5-4.5V20a4.5 4.5 0 0 1 4.5-4.5Z" fill="#FFFFFF" fill-opacity="0.92"/>
+  <path d="m39 32.5-3 4v-4Z" fill="#FFFFFF" fill-opacity="0.92"/>
+  <circle cx="39" cy="24.2" r="1.2" fill="#6379E9"/>
+  <circle cx="43.2" cy="24.2" r="1.2" fill="#4F9EEF"/>
+  <circle cx="47.4" cy="24.2" r="1.2" fill="#35C2C4"/>
+</svg>

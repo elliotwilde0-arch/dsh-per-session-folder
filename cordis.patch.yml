@@ -1,0 +1,9 @@
+- insert:
+    - id: session-dir
+      name: dsh-per-session-folder
+      config:
+        enabled: true
+        root: ''
+        creationMode: immediate
+        workspacePath: ''
+        maxNameChars: 60

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Folders",
+    "description": "Gives every new default-workspace conversation its own folder named after the conversation, so separate chats never share files."
+  }
+}
