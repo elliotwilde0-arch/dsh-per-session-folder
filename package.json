@@ -1,0 +1,67 @@
+{
+  "name": "dsh-per-session-folder",
+  "version": "0.1.3",
+  "type": "module",
+  "description": "Creates one isolated folder per new default-workspace session and keeps its title synchronized.",
+  "license": "MIT",
+  "author": "hhuapen",
+  "homepage": "https://github.com/elliotwilde0-arch/dsh-per-session-folder#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elliotwilde0-arch/dsh-per-session-folder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/elliotwilde0-arch/dsh-per-session-folder/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "dsh-plugin",
+    "session",
+    "folder",
+    "workspace"
+  ],
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs/screenshot.png",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": ">=3.18.5 <4"
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.3 <0.3.0"
+  },
+  "scripts": {
+    "test": "node --test test/session-dir.test.js test/client-working-directory.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-api-session-controller"
+      ],
+      "platform": "web"
+    }
+  }
+}
