@@ -37,8 +37,7 @@
     "docs/screenshot.png",
     "locale/*.json",
     "icon.svg",
-    "README.md",
-    "README.zh-CN.md"
+    "README.md"
   ],
   "peerDependencies": {
     "@deepseek-ai/schemastery": ">=3.18.5 <4"
