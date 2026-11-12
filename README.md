@@ -1,125 +1,83 @@
-> **This is a patched fork.** Upstream: [hhuapen/dsh-per-session-folder](https://github.com/hhuapen/dsh-per-session-folder).
-> Based on commit `main` @ v0.1.1 (2026-11-02) with one added compatibility layer in `client.js`;
-> see [CHANGELOG.md](./CHANGELOG.md) for 0.1.2 and [issue #1 upstream](https://github.com/hhuapen/dsh-per-session-folder/issues/1) for the analysis.
->
-> Install this fork instead of upstream:
-> `dsh plugin add github:elliotwilde0-arch/dsh-per-session-folder`
-> (or point the plugin manager's install spec at the same `github:` value).
+# Session Folders（会话独立文件夹）
 
-# Session Folders
+> **本仓库是改编版，不是原插件。** 上游：[hhuapen/dsh-per-session-folder](https://github.com/hhuapen/dsh-per-session-folder)（MIT）。
+> 基线是上游 `v0.1.1`（2026-11-02），只改了 `client.js`，在原有兼容层里补了一段文件地址处理。
+> 上游问题分析见 [issue #1](https://github.com/hhuapen/dsh-per-session-folder/issues/1)，版本差异见 [CHANGELOG.md](./CHANGELOG.md)。
 
-**One isolated folder per new conversation, with names that stay in sync with the session title.**
+## 这个插件是做什么的
 
-[中文文档](README.zh-CN.md)
+给默认工作区里的每个新会话分配一个独立文件夹，并把文件夹名与会话标题保持同步。临时会话、试验脚本、下载文件各自待在自己的目录里，不会串到下一个会话。
 
-Session Folders is a DSH host and client plugin for temporary or uncategorized conversations.
-Every new session in the default workspace gets its own working directory without creating
-another sidebar workspace or changing workspace ownership.
+- 新会话自动创建文件夹，先用第一条消息当名字，生成标题后再改名
+- 重名自动加 `-2`、`-3`
+- 「在文件夹中打开」和本地文件操作指向当前会话文件夹
+- 会话文件夹里放 `.dsh-per-session-folder.json` 标记，重启后能认回自己的目录
+- 不新增侧边栏工作区，不改变历史会话的工作区归属
 
-![Session Folders settings](./docs/screenshot.png)
+## 为什么要改编
 
-## Why
+原插件在 DSH `0.2.2-rc.1` 上有一个可见的 bug：**从右侧侧边栏、聊天里的文件卡片、交付物卡片点开会话文件夹里的文件，会提示「文件不存在，可能已被移动或删除」，但文件其实好好地躺在磁盘上。** 把路径复制到资源管理器里能正常打开。
 
-Scratch conversations often share the same default directory. One chat can leave scripts,
-downloads, or test files that confuse the next chat. Session Folders isolates those files
-at the filesystem level while preserving DSH's existing workspace and history model.
+### 成因
 
-## Features
+这不是文件丢了，是路径的基准对不上，分两半：
 
-- Creates one folder for each new conversation in the default workspace.
-- Uses the first message as an initial readable name.
-- Renames the folder when the generated or edited session title changes.
-- Resolves collisions with `-2`, `-3`, and so on.
-- Uses the native Windows folder picker for the parent directory.
-- Checks that the selected folder is accessible.
-- Supports immediate creation or creation on the first message.
-- Recovers folders and title synchronization after a DSH restart.
-- Keeps DSH's Open In button and local-file actions pointed at the active session folder.
-- Never creates extra workspace entries or changes historical workspace ownership.
-- Leaves files written to explicit absolute paths elsewhere untouched.
+1. 插件为了让「在文件夹中打开」指向会话目录，会把 DSH 客户端会话列表里的 `cwd` 从工作区根改写成会话文件夹（`client.js` 里的镜像逻辑）。
+2. DSH 核心据此构造「相对于工作区」的文件地址，于是地址被剥成了 `报告.json` 这样的裸文件名；而 Host 端工作区文件服务解析相对路径用的基准是会话 header 里的 `cwd` —— 这个值永远是创建会话时的工作区根，DSH 不会因为工作目录变更而回写它。两边一错位，`lstat` 就落在 `default-workspace\报告.json`，而文件真正的路径是 `default-workspace\会话文件夹\报告.json`，于是返回 `workspace-file/not-found`。
 
-## Requirements
+会话文件夹还会随标题改名，任何早先记下的路径都会跟着失效，进一步放大了这个问题。
 
-- DSH `>=0.2.1-rc.3 <0.3.0`
-- Node.js 22 or newer for development
+### 改了什么
 
-## Install
+只动 `client.js`，全部是新增代码，共 3 处插入（15475 → 28907 字节）：
 
-```powershell
-dsh plugin add dsh-per-session-folder
-```
+1. **在读取出口归一化地址。** 包装 `remote.workspaceFiles` 的 `read` / `stat` / `readBytes` / `list`：拿到裸相对路径时先补上会话文件夹前缀再请求，只有在返回 `workspace-file/not-found` 时才退回原路径 —— 最坏情况与原插件行为完全一致。
+2. **前缀有两个来源。** 一是镜像 `cwd` 时记下的相对段；二是从会话列表的 `projectionValues.workingDirectory` 反推，所以即使是重启后重新打开的历史会话（没有实时 agent）也能算出来。
+3. **顺带收敛重复前缀。** `文件夹/文件夹/文件` 会被折成 `文件夹/文件夹`一次，`openResource` 上也做了同样处理。
+4. **不碰 DSH 安装目录。** 兼容层写在自己的插件里，DSH 一个字节没改；想恢复原样，把本仓库的 `client.js` 换成上游那份即可。
 
-Before the npm package is published, install directly from GitHub:
+### 版本说明
+
+- `0.1.2` 只包装了 `sidebarRight.openResource`，而文件读取根本不走那条路，**等于没修**，已被 `0.1.3` 取代。
+- `0.1.3` 补上了 `remote.workspaceFiles` 这一面，是本仓库当前发布、也是实机验证通过的版本。
+
+## 安装
+
+要求 DSH `>=0.2.1-rc.3 <0.3.0`。
+
+私有仓库，两种装法：
 
 ```powershell
-dsh plugin add github:hhuapen/dsh-per-session-folder
+# 1) 从仓库装（需要本机有 GitHub 凭据）
+dsh plugin add github:elliotwilde0-arch/dsh-per-session-folder
+
+# 2) 从本地安装包装（不需要联网）
+dsh plugin add C:\path\to\dsh-per-session-folder-0.1.3.tgz
 ```
 
-For a local checkout:
+也可以在「插件管理」里把安装来源填成上面的值。装完**完整退出并重启 DSH** —— 客户端插件在启动时读入并缓存，重启前跑的还是旧代码。
 
-```powershell
-dsh plugin add C:\path\to\dsh-per-session-folder
+## 验证是否生效
+
+重启后打开侧边栏里的文件，正常情况下不再报「文件不存在」。想确认补丁真的挂上了，按 `Ctrl+Shift+I` 打开 DevTools，控制台里应该有一行：
+
+```
+[psf] workspaceFiles shim active: read:own, stat:own, readBytes:own, list:own
 ```
 
-Restart DSH after installation.
+看不到这行说明补丁没生效：要么插件被还原成了原版（`node_modules` 里被重新安装覆盖），要么 DSH 没有真正重启。
 
-## Setup
+## 跟随上游更新
 
-Open **Plugins → Installed plugins → Session Folders**.
+上游发新版后，把本仓库的 `client.js` 与上游新版的差异看一遍就知道还需不需要这个补丁。需要的话，用 `apply_patch.cjs` + `patch_block.js` 对新版 `client.js` 重打一次（脚本会先做语法校验，失败会拒绝写出）。
 
-The configuration embedded in the plugin detail page provides:
+## 已知限制
 
-- **Choose folder…** — select the parent directory used for new session folders.
-- **Use default workspace** — clear the custom parent directory.
-- **Create on open** — allocate a folder as soon as a new chat is opened.
-- **Create on first message** — avoid empty folders by waiting for the first prompt.
+- 依赖 DSH 内部客户端接口（`remote.workspaceFiles` 的注入名、`sidebarRight.openResource`），DSH 大版本升级后可能失效，失效时退化为上游原有行为。
+- 预留给排障的 `[psf]` 前缀日志保留在代码里，不影响功能。
+- 只修「打不开」，不改插件的目录策略、改名行为和标记文件机制。
+- 会话文件夹需要是工作区根的直接子目录才生效（默认配置就是这样）。
 
-The selected folder is checked for accessibility. If a folder cannot be used, the session
-continues in the default workspace instead of blocking the conversation.
+## 许可
 
-## Configuration
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `enabled` | `true` | Enable per-session folders |
-| `root` | `''` | Parent folder; empty uses the default workspace |
-| `creationMode` | `immediate` | `immediate` or `first-message` |
-| `workspacePath` | `''` | Optional workspace override for advanced setups |
-| `maxNameChars` | `60` | Maximum folder-name length |
-
-## Scope and behavior
-
-Session Folders affects only new, top-level sessions whose original working directory is
-the default workspace. Historical sessions, subagent sessions, and sessions in other
-workspaces are left unchanged.
-
-The session header keeps the original workspace path. Only the effective working directory
-changes through `ctx.workingDirectory.set(agent, path)`, which is durable and replayed by DSH.
-The client plugin mirrors that effective directory into DSH's session UI when the required
-client interface is available, so directory-opening controls target the managed folder.
-
-Each managed folder contains `.dsh-per-session-folder.json`. This marker lets the plugin
-recover its folder after a restart. Folders created by the earlier development name retain
-their legacy marker and are adopted automatically.
-
-## Limitations
-
-- Only operations that resolve relative to the current working directory are isolated.
-  Absolute paths intentionally written elsewhere are not intercepted or moved.
-- Changing the parent directory affects only future sessions. Existing folders stay put.
-- The plugin never deletes or archives folders automatically.
-- Renaming a folder can invalidate an old path already mentioned earlier in a model turn.
-  The next model step receives a working-directory change notice.
-
-## Development
-
-```powershell
-npm test
-```
-
-The test suite covers naming, collision handling, restart recovery, workspace scoping,
-subagent exclusion, path failure fallback, deferred creation, and client directory syncing.
-
-## License
-
-[MIT](LICENSE)
+MIT，原始版权归 [hhuapen](https://github.com/hhuapen) 所有。本改编版同样以 MIT 发布。
