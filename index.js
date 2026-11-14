@@ -168,6 +168,16 @@ function fallbackName(session) {
   return id ? `会话-${day}-${time}-${id}` : `会话-${day}-${time}`
 }
 
+/**
+ * Whether the folder still carries the name this plugin gives it before a title
+ * exists, i.e. whether a title has renamed it yet.
+ */
+export function isDefaultFolderName(name) {
+  return (
+    typeof name === 'string' && /^会话-\d{8}-\d{6}(-[a-z0-9]+)?$/iu.test(name)
+  )
+}
+
 export function safeFolderName(raw, max = DEFAULT_MAX_NAME_CHARS) {
   let text = String(raw ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return ''
@@ -423,6 +433,10 @@ export function apply(ctx, rawConfig) {
     const preferred = safeFolderName(preferredRaw, config.maxNameChars)
     if (!preferred || !(await isDirectory(state.dir))) return
     if (state.desired === preferred) return
+    // The title can change on every prompt, but the folder is renamed once: each
+    // rename moves the working directory, invalidates open file addresses and
+    // injects another working-directory notice into the conversation.
+    if (!isDefaultFolderName(path.basename(state.dir))) return
 
     const parent = path.dirname(state.dir)
     const target = await uniqueRenameTarget(parent, preferred, state.dir)
@@ -530,6 +544,7 @@ export function apply(ctx, rawConfig) {
       const title = latestTitle(session)
       if (!title) return
       await syncName(agent, session, state, title)
+      pendingRenames.delete(session.id)
     })
   }
 

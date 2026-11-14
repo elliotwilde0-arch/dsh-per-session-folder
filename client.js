@@ -406,7 +406,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Compatibility shim for workspace file addresses (v5).
+     * Compatibility shim for workspace file addresses (v6).
      *
      * DSH resolves the path carried by a `dsh-resource://file/...` address
      * against the Session's workspace root (header.cwd), while this plugin
@@ -451,7 +451,7 @@ window.__ModuleLoader__.load({
     }
 
     const psf = (globalThis.__psf = {
-      version: 5,
+      version: 6,
       loadedAt: new Date().toISOString(),
       steps: [],
       calls: [],
@@ -464,7 +464,7 @@ window.__ModuleLoader__.load({
       psf.steps.push(extra === undefined ? step : step + ' :: ' + extra)
     }
 
-    console.warn('[psf] client module loaded (v5)')
+    console.warn('[psf] client module loaded (v6)')
     setTimeout(() => {
       try {
         console.warn('[psf] state after boot :: ' + JSON.stringify(psf))
@@ -558,6 +558,31 @@ window.__ModuleLoader__.load({
       return prefix + '/' + normalized
     }
 
+    /**
+     * The first segment under the session folder can be a folder name from
+     * before a rename. When nothing carrying that name exists any more, hand
+     * back the path without it, so a stored address still reaches its file.
+     *
+     * The probe runs first: a segment that does exist means the address is right
+     * and the file really is gone, and then nothing is rewritten.
+     */
+    async function stripUnknownSegment(files, probe, sessionId, wrapped) {
+      if (typeof probe !== 'function') return undefined
+      const prefix = prefixFor(sessionId)
+      if (typeof prefix !== 'string' || prefix === '') return undefined
+      const normalized = wrapped.replace(/\\/g, '/')
+      if (!normalized.startsWith(prefix + '/')) return undefined
+      const segments = normalized.slice(prefix.length + 1).split('/')
+      if (segments.length < 2) return undefined
+      try {
+        await probe.call(files, sessionId, prefix + '/' + segments[0])
+        return undefined
+      } catch (error) {
+        if (!isMissingFile(error)) return undefined
+      }
+      return prefix + '/' + segments.slice(1).join('/')
+    }
+
     function isMissingFile(error) {
       const code = String(error?.code ?? error?.data?.code ?? '')
       if (code === 'workspace-file/not-found') return true
@@ -636,6 +661,9 @@ window.__ModuleLoader__.load({
       if (files === undefined || files === null) return 0
       if (files.__psfWrapped === true) return 1
       let count = 0
+      // The unwrapped stat answers whether a path exists, which is what tells a
+      // stale folder name apart from a file that really is missing.
+      const probe = typeof files.stat === 'function' ? files.stat : undefined
       for (const name of ['read', 'stat', 'readBytes', 'list']) {
         const result = replaceMethod(files, name, (original) =>
           async function (sessionId, path, ...rest) {
@@ -649,6 +677,17 @@ window.__ModuleLoader__.load({
             } catch (error) {
               if (!isMissingFile(error)) throw error
               note('not-found fallback', name + ' ' + path)
+              if (name !== 'list') {
+                const stripped = await stripUnknownSegment(files, probe, sessionId, normalized)
+                if (stripped !== undefined) {
+                  note('stale segment dropped', path + ' -> ' + stripped)
+                  try {
+                    return await original.call(this, sessionId, stripped, ...rest)
+                  } catch (retryError) {
+                    if (!isMissingFile(retryError)) throw retryError
+                  }
+                }
+              }
               return original.call(this, sessionId, path, ...rest)
             }
           },

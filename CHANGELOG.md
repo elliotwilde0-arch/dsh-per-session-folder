@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.0 - 2026-11-14
+
+- **The folder is renamed once.** DSH can refresh the session title on every
+  prompt ("随对话更新标题"), and every rename moved the working directory,
+  invalidated the addresses of already-open files and injected another
+  `The working directory changed` notice into the conversation. `syncName` now
+  renames only while the folder still carries the name this plugin gives it, so
+  the folder follows the first title and then stays put.
+- **An address with a folder name that no longer exists is repaired.** When a
+  read fails with `workspace-file/not-found`, the shim asks whether the segment
+  under the session folder still exists; if nothing carries that name any more
+  the segment is dropped and the read is retried once. Files opened before a
+  rename, or restored after a reload, open again — and a file that really is
+  missing still reports the original error.
+
 ## 0.1.4 - 2026-11-14
 
 - Read the session folder name from the client list row on every rewrite instead
