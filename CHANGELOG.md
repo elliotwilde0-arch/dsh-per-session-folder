@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.4 - 2026-11-14
+
+- Read the session folder name from the client list row on every rewrite instead
+  of caching it at page load. The title sync renames the folder while the page
+  stays open, so the cached name kept prefixing addresses with a directory that
+  no longer existed and files opened from the sidebar still reported
+  `workspace-file/not-found` ("文件不存在") until DSH was reloaded.
+- Drop a leading segment that names an earlier name of the same folder, so a tab
+  restored after a rename opens its file instead of nesting the old name under
+  the new one.
+
 ## 0.1.3 - 2026-11-11
 
 - Cover the `remote.workspaceFiles` face as well as `sidebarRight.openResource`.

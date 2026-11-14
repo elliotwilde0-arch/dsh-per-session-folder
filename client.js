@@ -346,8 +346,12 @@ window.__ModuleLoader__.load({
             workingDirectory.length > 0 &&
             row.cwd !== workingDirectory
           ) {
+            if (workspaceRoot === '') workspaceRoot = row.cwd
+            const previous = relativeUnder(workspaceRoot, row.cwd)
+            if (previous !== '' && previous.includes('/') === false) {
+              rememberFolder(sessionId, previous)
+            }
             if (!originalRoots.has(sessionId)) {
-              if (workspaceRoot === '') workspaceRoot = row.cwd
               originalRoots.set(
                 sessionId,
                 relativeUnder(row.cwd, workingDirectory),
@@ -402,7 +406,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Compatibility shim for workspace file addresses (v4).
+     * Compatibility shim for workspace file addresses (v5).
      *
      * DSH resolves the path carried by a `dsh-resource://file/...` address
      * against the Session's workspace root (header.cwd), while this plugin
@@ -422,8 +426,32 @@ window.__ModuleLoader__.load({
      */
     const originalRoots = new Map()
 
+    /**
+     * Every folder name a session has used. The title sync renames the folder
+     * while the page stays open, so an address produced earlier can still carry
+     * a name the directory no longer has.
+     */
+    const historicFolders = new Map()
+
+    function rememberFolder(sessionId, name) {
+      if (typeof name !== 'string' || name === '') return
+      let names = historicFolders.get(sessionId)
+      if (names === undefined) {
+        names = new Set()
+        historicFolders.set(sessionId, names)
+      }
+      names.add(name)
+    }
+
+    /** A folder named by the plugin's own default (`会话-YYYYMMDD-HHMMSS-id`). */
+    function isSessionFolderName(name) {
+      return (
+        typeof name === 'string' && /^会话-\d{8}-\d{6}(-[a-z0-9]+)?$/iu.test(name)
+      )
+    }
+
     const psf = (globalThis.__psf = {
-      version: 4,
+      version: 5,
       loadedAt: new Date().toISOString(),
       steps: [],
       calls: [],
@@ -436,7 +464,7 @@ window.__ModuleLoader__.load({
       psf.steps.push(extra === undefined ? step : step + ' :: ' + extra)
     }
 
-    console.warn('[psf] client module loaded (v4)')
+    console.warn('[psf] client module loaded (v5)')
     setTimeout(() => {
       try {
         console.warn('[psf] state after boot :: ' + JSON.stringify(psf))
@@ -474,6 +502,16 @@ window.__ModuleLoader__.load({
       const prefix = prefixFor(sessionId)
       if (typeof prefix !== 'string' || prefix === '') return path
       const segments = normalized.split('/')
+      // An address built before a rename still starts with the old folder name:
+      // drop it instead of nesting it under the current one.
+      const historic = historicFolders.get(sessionId)
+      while (
+        segments.length > 1 &&
+        segments[0] !== prefix &&
+        (isSessionFolderName(segments[0]) || historic?.has(segments[0]) === true)
+      ) {
+        segments.shift()
+      }
       while (segments.length > 1 && segments[0] === prefix) segments.shift()
       const rest = segments.join('/')
       if (rest === '') return path
@@ -483,24 +521,30 @@ window.__ModuleLoader__.load({
     let workspaceRoot = ''
     let sessionRows = undefined
 
-    /** The session folder name, relative to the workspace root. */
+    /**
+     * The session folder name, relative to the workspace root.
+     *
+     * Read from the row on every call. A name cached at page load goes stale as
+     * soon as the title sync renames the folder, and a stale name prefixes every
+     * address with a directory that no longer exists.
+     */
     function prefixFor(sessionId) {
-      const known = originalRoots.get(sessionId)
-      if (typeof known === 'string' && known !== '') return known
       try {
         const rows = sessionRows?.()
         const row = rows?.[sessionId]
-        const folder = row?.projectionValues?.workingDirectory ?? row?.cwd
+        const folder = row?.cwd ?? row?.projectionValues?.workingDirectory
         if (typeof folder === 'string' && workspaceRoot !== '') {
-          const relative = relativeUnder(workspaceRoot, folder)
-          if (relative !== '' && relative.includes('/') === false) {
-            originalRoots.set(sessionId, relative)
-            return relative
+          const live = relativeUnder(workspaceRoot, folder)
+          if (live !== '' && live.includes('/') === false) {
+            originalRoots.set(sessionId, live)
+            return live
           }
         }
       } catch (error) {
-        note('prefix fallback failed', String(error))
+        note('prefix lookup failed', String(error))
       }
+      const known = originalRoots.get(sessionId)
+      if (typeof known === 'string' && known !== '') return known
       return ''
     }
 
