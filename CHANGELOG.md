@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.0 - 2026-11-18
+
+- **The folder is named from the DSH session title, not the raw first message.**
+  The single rename used to run at the first step of the first turn, before the
+  LLM title existed, so `title || text` picked the raw message (leading
+  `@C:\...` paths and URLs) and consumed the rename quota; the good title that
+  arrived later was locked out by the default-name gate. The folder now keeps
+  its neutral `会话-YYYYMMDD-HHMMSS-id` name until a `session/title` event with
+  `source.kind` `provider` (LLM) or `user` (manual rename) arrives. DSH's
+  `fallback` title (leading words of the raw message) never names the folder.
+- **Configurable rename policy.** `renamePolicy`: `once` (default — rename on
+  the first LLM/manual title, then lock), `follow` (track every title update,
+  i.e. adapt to "随对话更新标题", capped by `maxRenames`, default 3), `never`
+  (no automatic rename). `followUserRename` (default true) lets a manual
+  sidebar rename move the folder even when locked.
+- **Clean-text fallback.** If no LLM/manual title has arrived after
+  `textFallbackTurns` turns (default 3), the first message with @references and
+  URLs stripped names the folder once; a later LLM title may still upgrade that
+  name. `0` disables the fallback and keeps the timestamp name.
+- Rename count and naming source persist in the marker file, so the `follow`
+  cap survives application restarts.
+- Note: folder naming depends on DSH actually producing LLM titles. If the
+  title provider's `maxOutputTokens` is smaller than the model's default
+  reasoning budget (e.g. the built-in 64 on a reasoning-by-default gateway),
+  every title call fails silently and folders keep their fallback names. See
+  the README verification section for the profile-side fix.
+
 ## 0.2.0 - 2026-11-14
 
 - **The folder is renamed once.** DSH can refresh the session title on every

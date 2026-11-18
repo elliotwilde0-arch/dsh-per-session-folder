@@ -7,3 +7,7 @@
         creationMode: immediate
         workspacePath: ''
         maxNameChars: 60
+        renamePolicy: once
+        followUserRename: true
+        maxRenames: 3
+        textFallbackTurns: 3

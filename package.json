@@ -1,8 +1,8 @@
 {
   "name": "dsh-per-session-folder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Creates one isolated folder per new default-workspace session and keeps its title synchronized.",
+  "description": "Creates one isolated folder per new default-workspace session and names it from the DSH session title.",
   "license": "MIT",
   "author": "hhuapen",
   "homepage": "https://github.com/elliotwilde0-arch/dsh-per-session-folder#readme",
@@ -37,7 +37,8 @@
     "docs/screenshot.png",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "test/*.test.js"
   ],
   "peerDependencies": {
     "@deepseek-ai/schemastery": ">=3.18.5 <4"
@@ -46,7 +47,7 @@
     "dsh": ">=0.2.1-rc.3 <0.3.0"
   },
   "scripts": {
-    "test": "node --test test/session-dir.test.js test/client-working-directory.test.js"
+    "test": "node --test"
   },
   "dsh": {
     "bundle": {

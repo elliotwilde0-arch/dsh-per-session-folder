@@ -7,6 +7,8 @@ const MARKER = '.dsh-per-session-folder.json'
 const LEGACY_MARKER = '.dsh-session-dir.json'
 const MARKER_VERSION = 1
 const DEFAULT_MAX_NAME_CHARS = 60
+const DEFAULT_MAX_RENAMES = 3
+const DEFAULT_TEXT_FALLBACK_TURNS = 3
 const ILLEGAL = /[<>:"/\\|?*\u0000-\u001f]/g
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
 
@@ -46,6 +48,27 @@ export const Config = schema
         .max(120)
         .default(DEFAULT_MAX_NAME_CHARS)
         .description('文件夹名的最大字符数。'),
+      renamePolicy: schema
+        .union(['once', 'follow', 'never'])
+        .default('once')
+        .volatile()
+        .description('文件夹改名策略：once 等第一个 LLM/手动标题改一次名后锁定；follow 跟随每次标题更新（受 maxRenames 限制）；never 从不自动改名。'),
+      followUserRename: schema
+        .boolean()
+        .default(true)
+        .description('在侧边栏手动重命名会话时，文件夹是否跟随改名（不受 once/never 锁定影响）。'),
+      maxRenames: schema
+        .number()
+        .min(1)
+        .max(20)
+        .default(DEFAULT_MAX_RENAMES)
+        .description('follow 策略下自动改名的次数上限（手动改名不计入）。'),
+      textFallbackTurns: schema
+        .number()
+        .min(0)
+        .max(20)
+        .default(DEFAULT_TEXT_FALLBACK_TURNS)
+        .description('多少个回合结束后仍没有 LLM/手动标题时，用清洗后的首条消息文本（去掉 @引用和网址）给文件夹命名；0 表示禁用，文件夹保持时间戳名。'),
     })
   : undefined
 
@@ -99,26 +122,6 @@ function isHumanMessage(message) {
   return message?.source?.kind === 'user' && messageText(message).length > 0
 }
 
-function textFromMessages(messages) {
-  if (!Array.isArray(messages)) return ''
-  for (const message of messages) {
-    if (isHumanMessage(message)) return messageText(message)
-  }
-  return ''
-}
-
-function textFromInbox(agent) {
-  const inbox = agent?.inbox
-  const groups = [inbox?.nextTurn, inbox?.nextStep]
-  for (const group of groups) {
-    if (!Array.isArray(group)) continue
-    for (const message of group) {
-      if (isHumanMessage(message)) return messageText(message)
-    }
-  }
-  return ''
-}
-
 function firstCommittedUserText(session) {
   try {
     for (const event of session?.snapshotEvents?.() ?? []) {
@@ -144,17 +147,25 @@ function hasPriorConversation(session) {
   }
 }
 
-function latestTitle(session) {
+/**
+ * Latest non-empty session title together with its source kind. DSH emits
+ * `session/title` with `source.kind` = 'fallback' (leading words of the first
+ * message), 'provider' (LLM-generated) or 'user' (manual rename). Only the
+ * latter two are meaningful folder names; the fallback is raw message text.
+ */
+export function latestTitleInfo(session) {
   try {
     const events = session?.snapshotEvents?.() ?? []
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index]
-      if (event?.type === 'session/title' && typeof event.data?.title === 'string') {
-        return event.data.title.trim()
-      }
+      if (event?.type !== 'session/title') continue
+      const title = typeof event.data?.title === 'string' ? event.data.title.trim() : ''
+      if (!title) continue
+      const kind = event.data?.source?.kind
+      return { title, kind: kind === 'provider' || kind === 'user' ? kind : 'fallback' }
     }
   } catch {}
-  return ''
+  return { title: '', kind: '' }
 }
 
 function fallbackName(session) {
@@ -190,9 +201,54 @@ export function safeFolderName(raw, max = DEFAULT_MAX_NAME_CHARS) {
   return text === '.' || text === '..' ? '' : text
 }
 
+const AT_REFERENCE = /(^|\s)@(?:"[^"]*"|[^\s@]+)/g
+const URL_IN_TEXT =
+  /\b(?:https?|ftp):\/\/[^\s<>"'`，。；、！？）】》]+|\bwww\.[^\s<>"'`，。；、！？）】》]+/gi
+const EDGE_PUNCTUATION =
+  /^[\s:：,，.。;；、!！?？~～\-—]+|[\s:：,，.。;；、!！?？~～\-—]+$/g
+
+/**
+ * Strip @file references and URLs from a message so the leftover prose can name
+ * the folder when no LLM title ever arrives. `user@example.com` is kept intact
+ * because the @ is not at a word boundary.
+ */
+export function cleanMessageText(raw) {
+  let text = String(raw ?? '')
+  text = text.replace(AT_REFERENCE, '$1 ')
+  text = text.replace(URL_IN_TEXT, ' ')
+  text = text.replace(/\s+/g, ' ').trim()
+  text = text.replace(EDGE_PUNCTUATION, '')
+  return text.trim()
+}
+
+/**
+ * Decide whether a naming source may rename the folder.
+ * kind: 'provider' (LLM title) | 'user' (manual rename) | 'text' (cleaned
+ * first-message fallback). DSH's 'fallback' title never names the folder.
+ */
+export function renameDecision({
+  policy,
+  followUserRename,
+  kind,
+  isDefault,
+  lastNameKind,
+  renameCount,
+  maxRenames,
+}) {
+  if (kind === 'user') return followUserRename ? 'rename' : 'skip'
+  if (kind !== 'provider' && kind !== 'text') return 'skip'
+  if (policy === 'never') return 'skip'
+  if (policy === 'follow') return renameCount < maxRenames ? 'rename' : 'skip'
+  if (isDefault) return 'rename'
+  // once: a clean-text fallback name may still be upgraded to the first LLM title.
+  if (kind === 'provider' && lastNameKind === 'text') return 'rename'
+  return 'skip'
+}
+
 export function apply(ctx, rawConfig) {
   const rootReference = rawConfig?.root
   const creationModeReference = rawConfig?.creationMode
+  const renamePolicyReference = rawConfig?.renamePolicy
   const rootValue = () => {
     const candidate =
       typeof rootReference?.get === 'function' ? rootReference.get() : rootReference
@@ -205,6 +261,13 @@ export function apply(ctx, rawConfig) {
         : creationModeReference
     return candidate === 'first-message' ? 'first-message' : 'immediate'
   }
+  const renamePolicyValue = () => {
+    const candidate =
+      typeof renamePolicyReference?.get === 'function'
+        ? renamePolicyReference.get()
+        : renamePolicyReference
+    return candidate === 'follow' || candidate === 'never' ? candidate : 'once'
+  }
   const config = {
     enabled: rawConfig?.enabled !== false,
     get root() {
@@ -213,12 +276,23 @@ export function apply(ctx, rawConfig) {
     get creationMode() {
       return creationModeValue()
     },
+    get renamePolicy() {
+      return renamePolicyValue()
+    },
     workspacePath: expandEnvironment(rawConfig?.workspacePath),
     maxNameChars: clampInt(
       rawConfig?.maxNameChars,
       12,
       120,
       DEFAULT_MAX_NAME_CHARS,
+    ),
+    followUserRename: rawConfig?.followUserRename !== false,
+    maxRenames: clampInt(rawConfig?.maxRenames, 1, 20, DEFAULT_MAX_RENAMES),
+    textFallbackTurns: clampInt(
+      rawConfig?.textFallbackTurns,
+      0,
+      20,
+      DEFAULT_TEXT_FALLBACK_TURNS,
     ),
   }
   if (!config.enabled) return
@@ -303,7 +377,15 @@ export function apply(ctx, rawConfig) {
   function stateOf(session) {
     let state = states.get(session.id)
     if (!state) {
-      state = { dir: undefined, desired: undefined, chain: Promise.resolve() }
+      state = {
+        dir: undefined,
+        desired: undefined,
+        chain: Promise.resolve(),
+        renameCount: 0,
+        nameKind: '',
+        turnsEnded: 0,
+        createdAt: undefined,
+      }
       states.set(session.id, state)
     }
     return state
@@ -342,12 +424,17 @@ export function apply(ctx, rawConfig) {
     return undefined
   }
 
-  async function writeMarker(directory, session) {
+  async function writeMarker(directory, session, extra = {}) {
     const marker = {
       version: MARKER_VERSION,
       sessionId: session.id,
-      createdAt: new Date().toISOString(),
+      createdAt:
+        typeof extra.createdAt === 'string' && extra.createdAt
+          ? extra.createdAt
+          : new Date().toISOString(),
     }
+    if (typeof extra.renameCount === 'number') marker.renameCount = extra.renameCount
+    if (typeof extra.nameKind === 'string' && extra.nameKind) marker.nameKind = extra.nameKind
     await writeFile(path.join(directory, MARKER), JSON.stringify(marker), 'utf8')
   }
 
@@ -401,6 +488,14 @@ export function apply(ctx, rawConfig) {
     return path.join(root, `${base}-${Date.now()}`)
   }
 
+  function adoptMarked(session, state, marked, marker) {
+    state.dir = marked
+    state.desired = path.basename(marked)
+    state.createdAt = marker?.createdAt
+    state.renameCount = typeof marker?.renameCount === 'number' ? marker.renameCount : 0
+    state.nameKind = typeof marker?.nameKind === 'string' ? marker.nameKind : ''
+  }
+
   async function adoptCurrent(session, state) {
     const current = workingDirectory.get(session)
     if (typeof current !== 'string' || !(await isDirectory(current))) return false
@@ -408,13 +503,12 @@ export function apply(ctx, rawConfig) {
     if (!marker) return false
     if (marker.legacyMarker) {
       try {
-        await writeMarker(current, session)
+        await writeMarker(current, session, { createdAt: marker.createdAt })
       } catch (error) {
         warn(`迁移会话目录标记失败：${error?.message ?? error}`)
       }
     }
-    state.dir = current
-    state.desired = path.basename(current)
+    adoptMarked(session, state, current, marker)
     return true
   }
 
@@ -429,14 +523,23 @@ export function apply(ctx, rawConfig) {
     return directory
   }
 
-  async function syncName(agent, session, state, preferredRaw, signal) {
+  async function syncName(agent, session, state, preferredRaw, signal, kind) {
     const preferred = safeFolderName(preferredRaw, config.maxNameChars)
     if (!preferred || !(await isDirectory(state.dir))) return
     if (state.desired === preferred) return
-    // The title can change on every prompt, but the folder is renamed once: each
-    // rename moves the working directory, invalidates open file addresses and
-    // injects another working-directory notice into the conversation.
-    if (!isDefaultFolderName(path.basename(state.dir))) return
+    // Every rename moves the working directory, invalidates open file addresses
+    // and injects a working-directory notice into the conversation, so each
+    // naming source must pass the configured policy before the folder moves.
+    const decision = renameDecision({
+      policy: config.renamePolicy,
+      followUserRename: config.followUserRename,
+      kind,
+      isDefault: isDefaultFolderName(path.basename(state.dir)),
+      lastNameKind: state.nameKind,
+      renameCount: state.renameCount,
+      maxRenames: config.maxRenames,
+    })
+    if (decision !== 'rename') return
 
     const parent = path.dirname(state.dir)
     const target = await uniqueRenameTarget(parent, preferred, state.dir)
@@ -462,6 +565,37 @@ export function apply(ctx, rawConfig) {
 
     state.dir = target
     state.desired = preferred
+    state.nameKind = kind
+    if (kind !== 'user') state.renameCount += 1
+    try {
+      await writeMarker(target, session, {
+        createdAt: state.createdAt,
+        renameCount: state.renameCount,
+        nameKind: state.nameKind,
+      })
+    } catch (error) {
+      warn(`更新会话目录标记失败：${error?.message ?? error}`)
+    }
+  }
+
+  /**
+   * Bring the folder name in line with the session title. LLM and manual titles
+   * win immediately; while only DSH's raw-text fallback title exists the folder
+   * keeps its timestamp name until `textFallbackTurns` turns have ended, then
+   * the cleaned first message names it once.
+   */
+  async function syncNaming(agent, session, state, signal) {
+    const { title, kind } = latestTitleInfo(session)
+    if (title && (kind === 'provider' || kind === 'user')) {
+      await syncName(agent, session, state, title, signal, kind)
+      return
+    }
+    if (config.textFallbackTurns <= 0) return
+    if (!isDefaultFolderName(path.basename(state.dir))) return
+    if (state.turnsEnded < config.textFallbackTurns) return
+    const cleaned = cleanMessageText(firstCommittedUserText(session))
+    if (!cleaned) return
+    await syncName(agent, session, state, cleaned, signal, 'text')
   }
 
   async function prepare(agent, messages, signal, allowCreate = true) {
@@ -473,10 +607,11 @@ export function apply(ctx, rawConfig) {
 
     const state = stateOf(session)
     const current = workingDirectory.get(session)
-    const text =
-      textFromMessages(messages) || textFromInbox(agent) || firstCommittedUserText(session)
-    const title = latestTitle(session)
-    const preferred = title || text || fallbackName(session)
+    const { title, kind } = latestTitleInfo(session)
+    // The raw first message (and DSH's fallback title built from it) must not
+    // name the folder: it starts with @paths/URLs and would consume the single
+    // rename before the LLM title exists. Wait for a provider/user title.
+    const usableTitle = kind === 'provider' || kind === 'user' ? title : ''
 
     if (!state.dir) {
       if (await adoptCurrent(session, state)) {
@@ -489,8 +624,8 @@ export function apply(ctx, rawConfig) {
         markerSearched.add(session.id)
         const marked = await findMarkedDirectory(destinationRoot(workspace), session.id)
         if (marked) {
-          state.dir = marked
-          state.desired = path.basename(marked)
+          const marker = await readMarker(marked, session.id)
+          adoptMarked(session, state, marked, marker)
           await workingDirectory.set(agent, marked, signal)
         }
       }
@@ -498,17 +633,19 @@ export function apply(ctx, rawConfig) {
 
     if (!state.dir) {
       if (!allowCreate || !samePath(current, workspace) || hasPriorConversation(session)) return
-      const base = safeFolderName(preferred, config.maxNameChars) || fallbackName(session)
+      const base = safeFolderName(usableTitle, config.maxNameChars) || fallbackName(session)
       const directory = await createDirectory(agent, session, base)
       state.dir = directory
       state.desired = base
+      state.createdAt = new Date().toISOString()
       return
     }
 
     if (!(await isDirectory(state.dir))) {
       const marked = await findMarkedDirectory(path.dirname(state.dir), session.id)
       if (marked) {
-        state.dir = marked
+        const marker = await readMarker(marked, session.id)
+        adoptMarked(session, state, marked, marker)
         await workingDirectory.set(agent, marked, signal)
       } else {
         states.delete(session.id)
@@ -520,11 +657,8 @@ export function apply(ctx, rawConfig) {
       await workingDirectory.set(agent, state.dir, signal)
     }
 
-    const hasMeaningfulName = Boolean(title || text)
-    if (hasMeaningfulName || pendingRenames.has(session.id)) {
-      await syncName(agent, session, state, preferred, signal)
-      pendingRenames.delete(session.id)
-    }
+    await syncNaming(agent, session, state, signal)
+    pendingRenames.delete(session.id)
   }
 
   async function queuePrepare(agent, messages, signal, allowCreate = true) {
@@ -541,9 +675,7 @@ export function apply(ctx, rawConfig) {
       if (!workspace || skipSession(session) || !samePath(session.header.cwd, workspace)) return
       const state = states.get(session.id)
       if (!state?.dir) return
-      const title = latestTitle(session)
-      if (!title) return
-      await syncName(agent, session, state, title)
+      await syncNaming(agent, session, state)
       pendingRenames.delete(session.id)
     })
   }
@@ -556,13 +688,19 @@ export function apply(ctx, rawConfig) {
     }
     if (event?.type === 'turn/end') {
       activeTurns.delete(session.id)
-      if (pendingRenames.has(session.id)) {
+      const state = states.get(session.id)
+      if (state) state.turnsEnded += 1
+      // Sync on every turn end: a title may have arrived mid-turn, and the
+      // clean-text fallback becomes due after enough title-less turns.
+      if (state?.dir || pendingRenames.has(session.id)) {
         const agent = service('agents')?.get?.(session.id)
         if (agent) void queueTitleSync(agent)
       }
       return
     }
     if (event?.type !== 'session/title') return
+    const kind = event.data?.source?.kind
+    if (kind !== 'provider' && kind !== 'user') return
     pendingRenames.add(session.id)
     if (activeTurns.has(session.id)) return
     const agent = service('agents')?.get?.(session.id)
