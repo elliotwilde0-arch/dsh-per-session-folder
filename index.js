@@ -8,7 +8,7 @@ const LEGACY_MARKER = '.dsh-session-dir.json'
 const MARKER_VERSION = 1
 const DEFAULT_MAX_NAME_CHARS = 60
 const DEFAULT_MAX_RENAMES = 3
-const DEFAULT_TEXT_FALLBACK_TURNS = 3
+const DEFAULT_TEXT_FALLBACK_TURNS = 1
 const ILLEGAL = /[<>:"/\\|?*\u0000-\u001f]/g
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
 
@@ -618,9 +618,14 @@ export function apply(ctx, rawConfig) {
         // The marker survived an application restart or plugin reload.
       } else if (
         samePath(current, workspace) &&
-        !markerSearched.has(session.id) &&
-        !hasPriorConversation(session)
+        !markerSearched.has(session.id)
       ) {
+        // Resumed sessions must re-adopt their own folder too: after a restart
+        // (or an external rename, e.g. the stock-folder cleanup) DSH falls back
+        // to the workspace root because the logged cwd no longer exists. The
+        // scan only matches a marker carrying THIS session's id, so it can
+        // never claim another session's folder; creation below still requires
+        // a session without prior conversation.
         markerSearched.add(session.id)
         const marked = await findMarkedDirectory(destinationRoot(workspace), session.id)
         if (marked) {

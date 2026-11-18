@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.1 - 2026-11-18
+
+- **Resumed sessions re-adopt their own folder.** After a restart — or after
+  the folder was renamed outside the plugin (e.g. the stock-folder cleanup) —
+  DSH falls back to the workspace root because the logged cwd no longer exists.
+  The marker scan used to skip sessions with prior conversation, so a resumed
+  session never found its renamed folder again and kept running in the root.
+  The scan now runs for resumed sessions too; it only matches a marker carrying
+  the session's own id, and folder creation still requires a brand-new session.
+- **Clean-text fallback fires after 1 title-less turn by default**
+  (`textFallbackTurns`, was 3), so folders get a readable name quickly even on
+  gateways where the DSH title provider cannot produce titles. A later LLM
+  title still upgrades the fallback name once.
+- Documentation: the title-provider troubleshooting section now describes the
+  verified upstream failure modes (64-token output budget consumed by
+  reasoning; the token-plan gateway rejecting `reasoning_effort: "off"` for
+  flash models) instead of recommending a global profile override. This plugin
+  does not modify the DSH title plugins or their configuration.
+
 ## 0.3.0 - 2026-11-18
 
 - **The folder is named from the DSH session title, not the raw first message.**

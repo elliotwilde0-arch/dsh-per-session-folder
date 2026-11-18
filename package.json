@@ -1,6 +1,6 @@
 {
   "name": "dsh-per-session-folder",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Creates one isolated folder per new default-workspace session and names it from the DSH session title.",
   "license": "MIT",

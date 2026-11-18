@@ -10,4 +10,4 @@
         renamePolicy: once
         followUserRename: true
         maxRenames: 3
-        textFallbackTurns: 3
+        textFallbackTurns: 1
